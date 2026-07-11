@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Разбивка типового меню на дни v3.1</title>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #f0f2f5; color: #333; }
+        .container { max-width: 800px; margin: 40px auto; padding: 0 20px; }
+        h1 { text-align: center; margin-bottom: 30px; color: #1a73e8; }
+        .card { background: #fff; border-radius: 12px; padding: 30px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        label { display: block; font-weight: 600; margin-bottom: 6px; color: #555; }
+        input[type="file"], input[type="date"], input[type="text"] { width: 100%; padding: 10px 14px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px; margin-bottom: 16px; }
+        input:focus { outline: none; border-color: #1a73e8; }
+        .row { display: flex; gap: 16px; }
+        .row > div { flex: 1; }
+        .btn { display: inline-block; padding: 12px 32px; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; }
+        .btn-primary { background: #1a73e8; color: #fff; }
+        .btn-primary:hover { background: #1557b0; }
+        .btn-download { background: #34a853; color: #fff; margin: 4px; font-size: 13px; padding: 8px 16px; text-decoration: none; display: inline-block; border-radius: 6px; }
+        .btn-download:hover { background: #2d8f47; }
+        .btn-zip { background: #ea4335; color: #fff; margin-top: 10px; }
+        .btn-zip:hover { background: #c5221f; }
+        #status { margin-top: 16px; padding: 12px; border-radius: 8px; display: none; }
+        .status-ok { background: #e6f4ea; color: #1e7e34; border: 1px solid #34a853; }
+        .status-err { background: #fce8e6; color: #c5221f; border: 1px solid #ea4335; }
+        .status-info { background: #e8f0fe; color: #1a73e8; border: 1px solid #1a73e8; }
+        .file-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+        .progress-bar { width: 100%; height: 6px; background: #eee; border-radius: 3px; margin-top: 10px; overflow: hidden; display: none; }
+        .progress-bar .fill { height: 100%; background: #1a73e8; width: 0%; transition: width 0.3s; border-radius: 3px; }
+        .skip-info { background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px; padding: 12px; margin-bottom: 16px; font-size: 13px; color: #856404; display: none; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Разбивка типового меню на дни v3.1</h1>
+    <div class="card">
+        <label>Загрузите файл типового меню (.xlsx)</label>
+        <input type="file" id="fileInput" accept=".xlsx,.xls">
+        <label>Диапазон дат</label>
+        <div class="row">
+            <div><label for="dateFrom">С даты</label><input type="date" id="dateFrom"></div>
+            <div><label for="dateTo">По дату</label><input type="date" id="dateTo"></div>
+        </div>
+        <div class="skip-info" id="skipInfo"></div>
+        <label for="schoolName">Название школы</label>
+        <input type="text" id="schoolName" value="МБОУ «Кузембетьевская СОШ им. Х. Г. Хусаинова»">
+        <div class="progress-bar" id="progressBar"><div class="fill" id="progressFill"></div></div>
+        <div id="status"></div>
+        <br>
+        <button class="btn btn-primary" onclick="splitMenu()">Разбить на дни</button>
+        <button class="btn btn-zip" id="btnZip" onclick="downloadAll()" style="display:none">Скачать все</button>
+    </div>
+    <div id="results" style="display:none">
+        <div class="card">
+            <h2 style="margin-bottom:10px;font-size:18px">Сгенерированные файлы</h2>
+            <div class="file-list" id="fileList"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+var generatedFiles = [];
+var DAY_NAMES = ['','I','II','III','IV','V','VI','VII','VIII','IX','X','XI','XII'];
+var COL_WIDTHS = [11.33, 16.40, 16.40, 43.11, 10.00, 7.57, 14.00, 8.14, 10.00, 13.00];
+
+// === Встроенный styles.xml из Python-файла (точные стили) ===
+var STYLES_XML = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><numFmts count=\"0\"/><fonts count=\"3\"><font><name val=\"Calibri\"/><family val=\"2\"/><color theme=\"1\"/><sz val=\"11\"/><scheme val=\"minor\"/></font><font><name val=\"Calibri\"/><sz val=\"11\"/></font><font><name val=\"Arial\"/><sz val=\"10\"/></font></fonts><fills count=\"3\"><fill><patternFill/></fill><fill><patternFill patternType=\"gray125\"/></fill><fill><patternFill patternType=\"solid\"><fgColor rgb=\"00FFF2CC\"/></patternFill></fill></fills><borders count=\"17\"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style=\"thin\"/><right style=\"thin\"/><top style=\"thin\"/><bottom style=\"thin\"/></border><border><left/><right/><top style=\"thin\"/><bottom style=\"thin\"/></border><border><left style=\"medium\"/><right style=\"thin\"/><top style=\"medium\"/></border><border><left style=\"thin\"/><right style=\"thin\"/><top style=\"medium\"/></border><border><left style=\"thin\"/><right style=\"medium\"/><top style=\"medium\"/></border><border><left style=\"medium\"/><top style=\"medium\"/></border><border><left style=\"thin\"/><right style=\"thin\"/><top style=\"medium\"/><bottom style=\"thin\"/></border><border><left style=\"thin\"/><right style=\"medium\"/><top style=\"medium\"/><bottom style=\"thin\"/></border><border><left style=\"medium\"/><top style=\"thin\"/></border><border><left style=\"thin\"/><right style=\"medium\"/><top style=\"thin\"/><bottom style=\"thin\"/></border><border><left style=\"medium\"/><top/></border><border><left style=\"thin\"/><right style=\"thin\"/><top/><bottom style=\"thin\"/></border><border><left style=\"thin\"/><right style=\"medium\"/><top/><bottom style=\"thin\"/></border><border><left style=\"medium\"/><bottom style=\"medium\"/></border><border><left style=\"thin\"/><right style=\"thin\"/><top style=\"thin\"/><bottom style=\"medium\"/></border><border><left style=\"thin\"/><right style=\"medium\"/><top style=\"thin\"/><bottom style=\"medium\"/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"31\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/><xf numFmtId=\"0\" fontId=\"1\" fillId=\"2\" borderId=\"1\"/><xf numFmtId=\"0\" fontId=\"1\" fillId=\"0\" borderId=\"2\"/><xf numFmtId=\"0\" fontId=\"1\" fillId=\"0\" borderId=\"3\"/><xf numFmtId=\"0\" fontId=\"2\" fillId=\"2\" borderId=\"1\"/><xf numFmtId=\"0\" fontId=\"2\" fillId=\"2\" borderId=\"13\"/><xf numFmtId=\"0\" fontId=\"1\" fillId=\"0\" borderId=\"4\"/><xf numFmtId=\"0\" fontId=\"1\" fillId=\"0\" borderId=\"5\"/><xf numFmtId=\"0\" fontId=\"1\" fillId=\"2\" borderId=\"8\"/><xf numFmtId=\"0\" fontId=\"2\" fillId=\"2\" borderId=\"8\"/><xf numFmtId=\"0\" fontId=\"1\" fillId=\"2\" borderId=\"10\"/><xf numFmtId=\"0\" fontId=\"1\" fillId=\"2\" borderId=\"1\"/><xf numFmtId=\"0\" fontId=\"1\" fillId=\"2\" borderId=\"11\"/><xf numFmtId=\"0\" fontId=\"1\" fillId=\"2\" borderId=\"12\"/><xf numFmtId=\"0\" fontId=\"1\" fillId=\"2\" borderId=\"13\"/><xf numFmtId=\"0\" fontId=\"2\" fillId=\"2\" borderId=\"13\"/><xf numFmtId=\"0\" fontId=\"2\" fillId=\"2\" borderId=\"14\"/><xf numFmtId=\"0\" fontId=\"2\" fillId=\"2\" borderId=\"15\"/><xf numFmtId=\"0\" fontId=\"1\" fillId=\"2\" borderId=\"6\"/><xf numFmtId=\"0\" fontId=\"1\" fillId=\"2\" borderId=\"12\"/><xf numFmtId=\"0\" fontId=\"1\" fillId=\"2\" borderId=\"16\"/><xf numFmtId=\"0\" fontId=\"1\" fillId=\"2\" borderId=\"13\"/><xf numFmtId=\"0\" fontId=\"2\" fillId=\"2\" borderId=\"13\"/><xf numFmtId=\"0\" fontId=\"1\" fillId=\"0\" borderId=\"15\"/><xf numFmtId=\"0\" fontId=\"1\" fillId=\"2\" borderId=\"15\"/><xf numFmtId=\"0\" fontId=\"1\" fillId=\"2\" borderId=\"16\"/><xf numFmtId=\"0\" fontId=\"1\" fillId=\"0\" borderId=\"16\"/><xf numFmtId=\"0\" fontId=\"1\" fillId=\"2\" borderId=\"15\"/><xf numFmtId=\"0\" fontId=\"2\" fillId=\"2\" borderId=\"15\"/><xf numFmtId=\"0\" fontId=\"2\" fillId=\"2\" borderId=\"16\"/><xf numFmtId=\"0\" fontId=\"2\" fillId=\"2\" borderId=\"14\"/></cellXfs><cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles></styleSheet>";
+
+document.getElementById('dateFrom').addEventListener('change', updateInfo);
+document.getElementById('dateTo').addEventListener('change', updateInfo);
+
+function updateInfo() {
+    var f = new Date(document.getElementById('dateFrom').value);
+    var t = new Date(document.getElementById('dateTo').value);
+    var el = document.getElementById('skipInfo');
+    if (isNaN(f) || isNaN(t) || t < f) { el.style.display = 'none'; return; }
+    var all = Math.round((t - f) / 86400000) + 1;
+    var work = 0;
+    var d = new Date(f);
+    while (d <= t) { if (d.getDay() !== 0) work++; d.setDate(d.getDate() + 1); }
+    var sun = all - work;
+    if (sun > 0) {
+        el.style.display = 'block';
+        el.innerHTML = 'Всего дней: ' + all + ', рабочих (без воскресений): <b>' + work + '</b>, воскресений пропущено: ' + sun;
+    } else { el.style.display = 'none'; }
+}
+
+function pad(n) { return n < 10 ? '0' + n : '' + n; }
+function fmtDate(d) { return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()); }
+
+function getWorkDays(f, t) {
+    var arr = [], d = new Date(f);
+    while (d <= t) { if (d.getDay() !== 0) arr.push(new Date(d)); d.setDate(d.getDate() + 1); }
+    return arr;
+}
+
+function setStatus(m, t) {
+    var el = document.getElementById('status');
+    el.textContent = m; el.className = 'status-' + t; el.style.display = 'block';
+}
+function showProg(p) {
+    document.getElementById('progressBar').style.display = 'block';
+    document.getElementById('progressFill').style.width = p + '%';
+}
+
+// === Замена styles.xml на встроенный ===
+function applyStyles(xlsxBytes) {
+    return JSZip.loadAsync(xlsxBytes).then(function(zip) {
+        zip.file('xl/styles.xml', STYLES_XML);
+        return zip.generateAsync({type: 'uint8array'});
+    });
+}
+
+async function splitMenu() {
+    var fi = document.getElementById('fileInput');
+    if (!fi.files.length) { setStatus('Загрузите файл меню', 'err'); return; }
+
+    var dateFrom = new Date(document.getElementById('dateFrom').value);
+    var dateTo = new Date(document.getElementById('dateTo').value);
+    if (isNaN(dateFrom) || isNaN(dateTo)) { setStatus('Укажите даты', 'err'); return; }
+    if (dateTo < dateFrom) { setStatus('Дата окончания раньше начала', 'err'); return; }
+
+    var workDays = getWorkDays(dateFrom, dateTo);
+    setStatus('Чтение файла...', 'info');
+    showProg(10);
+
+    var buf = await fi.files[0].arrayBuffer();
+    var wbSrc = XLSX.read(buf, {type:'array', cellDates:true});
+    var wsSrc = wbSrc.Sheets[wbSrc.SheetNames[0]];
+    var rng = XLSX.utils.decode_range(wsSrc['!ref']);
+
+    var allRows = [];
+    for (var r = rng.s.r + 1; r <= rng.e.r; r++) {
+        var row = [];
+        for (var c = rng.s.c; c <= rng.e.c; c++) {
+            var cell = wsSrc[XLSX.utils.encode_cell({r:r, c:c})];
+            row.push(cell ? cell.v : null);
+        }
+        allRows.push(row);
+    }
+
+    var days = {}, curKey = null;
+    for (var i = 0; i < allRows.length; i++) {
+        var d = allRows[i];
+        if (d[0] != null && d[1] != null && !isNaN(d[0]) && !isNaN(d[1])) {
+            curKey = d[0] + '-' + d[1];
+            if (!days[curKey]) days[curKey] = [];
+        }
+        if (curKey) days[curKey].push(d);
+    }
+
+    var sortedKeys = Object.keys(days).sort(function(a,b) {
+        var pa = a.split('-').map(Number), pb = b.split('-').map(Number);
+        return pa[0]-pb[0] || pa[1]-pb[1];
+    });
+
+    if (workDays.length < sortedKeys.length) {
+        setStatus('Рабочих дней ('+workDays.length+') меньше чем дней в меню ('+sortedKeys.length+')', 'err');
+        return;
+    }
+
+    setStatus('Генерация файлов...', 'info');
+    showProg(20);
+    generatedFiles = [];
+    var school = document.getElementById('schoolName').value;
+
+    for (var i = 0; i < sortedKeys.length; i++) {
+        var dayData = days[sortedKeys[i]];
+        var curDate = workDays[i];
+        var fName = fmtDate(curDate) + '-sm.xlsx';
+        var wb = XLSX.utils.book_new();
+        var sd = [];
+
+        sd.push(['Школа', school, null, null, 'Отд./корп', null, null, null, 'День', DAY_NAMES[i+1]]);
+        sd.push([null,null,null,null,null,null,null,null,null,null]);
+        sd.push(['Прием пищи','Раздел','№ рец.','Блюдо','Выход, г','Цена','Калорийность','Белки','Жиры','Углеводы']);
+
+        var curMeal = null, mealDone = false;
+        for (var j = 0; j < dayData.length; j++) {
+            var dd = dayData[j];
+            if (dd[2] && String(dd[2]).indexOf('Завтрак') >= 0) { curMeal = 'Завтрак'; mealDone = false; }
+            else if (dd[2] && String(dd[2]).indexOf('Обед') >= 0) { curMeal = 'Обед'; mealDone = false; }
+            else if (dd[2] && String(dd[2]).indexOf('Итого') >= 0) { curMeal = null; continue; }
+            if (!curMeal) continue;
+            if (dd[3] == null) continue;
+            if (String(dd[3]).trim() === 'итого') continue;
+
+            var rd = [null,null,null,null,null,null,null,null,null,null];
+            if (!mealDone) { rd[0] = curMeal; mealDone = true; }
+            rd[1] = dd[3]; rd[2] = dd[10]; rd[3] = dd[4]; rd[4] = dd[5];
+            rd[5] = dd[11]; rd[6] = dd[9]; rd[7] = dd[6]; rd[8] = dd[7]; rd[9] = dd[8];
+            sd.push(rd);
+        }
+
+        sd.push([null,null,null,null,null,null,null,null,null,null]);
+        var er = sd.length;
+        var itogo = [null,null,null,null,null,null,null,null,null,null];
+        itogo[4] = {f:'SUM(E4:E'+er+')'};
+        itogo[5] = {f:'SUM(F4:F'+er+')'};
+        itogo[6] = {f:'SUM(G4:G'+er+')'};
+        itogo[7] = {f:'SUM(H4:H'+er+')'};
+        itogo[8] = {f:'SUM(I4:I'+er+')'};
+        itogo[9] = {f:'SUM(J4:J'+er+')'};
+        sd.push(itogo);
+
+        var ws = XLSX.utils.aoa_to_sheet(sd);
+        ws['!cols'] = COL_WIDTHS.map(function(w) { return {wch: w}; });
+        ws['!merges'] = [{s:{r:0,c:1},e:{r:0,c:3}}];
+        XLSX.utils.book_append_sheet(wb, ws, '1');
+
+        var out = XLSX.write(wb, {bookType:'xlsx', type:'array'});
+
+        // Заменяем styles.xml на встроенный
+        var styled = await applyStyles(new Uint8Array(out));
+
+        var blob = new Blob([styled], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+        var url = URL.createObjectURL(blob);
+        generatedFiles.push({name:fName, url:url});
+
+        showProg(20 + Math.round((i+1)/sortedKeys.length*60));
+        await new Promise(function(r){setTimeout(r,0)});
+    }
+
+    var fl = document.getElementById('fileList');
+    fl.innerHTML = '';
+    for (var i = 0; i < generatedFiles.length; i++) {
+        var a = document.createElement('a');
+        a.href = generatedFiles[i].url; a.download = generatedFiles[i].name;
+        a.className = 'btn-download'; a.textContent = generatedFiles[i].name;
+        fl.appendChild(a);
+    }
+    document.getElementById('results').style.display = 'block';
+    document.getElementById('btnZip').style.display = 'inline-block';
+    showProg(100);
+    setStatus('Готово! Сгенерировано ' + generatedFiles.length + ' файлов.', 'ok');
+    setTimeout(function(){document.getElementById('progressBar').style.display='none'}, 1000);
+}
+
+function downloadAll() {
+    for (var i = 0; i < generatedFiles.length; i++) {
+        var a = document.createElement('a');
+        a.href = generatedFiles[i].url; a.download = generatedFiles[i].name;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    }
+}
+</script>
+</body>
+</html>
