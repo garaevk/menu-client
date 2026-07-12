@@ -107,10 +107,38 @@ function showProg(p) {
     document.getElementById('progressFill').style.width = p + '%';
 }
 
-// === Замена styles.xml на встроенный ===
-function applyStyles(xlsxBytes) {
+// === Замена styles.xml и вставка формул SUM ===
+function applyStyles(xlsxBytes, sums) {
     return JSZip.loadAsync(xlsxBytes).then(function(zip) {
+        // Заменяем styles.xml
         zip.file('xl/styles.xml', STYLES_XML);
+
+        // Вставляем формулы в последнюю строку sheet1.xml
+        if (sums) {
+            var sheetXml = zip.file('xl/worksheets/sheet1.xml');
+            if (sheetXml) {
+                return sheetXml.async('string').then(function(xml) {
+                    var lastRowIdx = xml.lastIndexOf('<row ');
+                    if (lastRowIdx >= 0) {
+                        var closeIdx = xml.indexOf('</row>', lastRowIdx);
+                        if (closeIdx >= 0) {
+                            closeIdx += 6; // длина '</row>'
+                            var cols = ['E','F','G','H','I','J'];
+                            var formulaCells = '';
+                            for (var i = 0; i < cols.length; i++) {
+                                if (sums[i] !== null && sums[i] !== undefined) {
+                                    var ref = cols[i] + sums.row;
+                                    formulaCells += '<c r="' + ref + '" s="1"><f>' + cols[i] + '4:' + cols[i] + (sums.row - 2) + '</f></c>';
+                                }
+                            }
+                            xml = xml.substring(0, closeIdx) + formulaCells + xml.substring(closeIdx);
+                        }
+                    }
+                    zip.file('xl/worksheets/sheet1.xml', xml);
+                    return zip.generateAsync({type: 'uint8array'});
+                });
+            }
+        }
         return zip.generateAsync({type: 'uint8array'});
     });
 }
@@ -196,15 +224,23 @@ async function splitMenu() {
             sd.push(rd);
         }
 
+        // Вычисляем суммы для итоговой строки
+        var sums = [null, null, null, null, 0, 0, 0, 0, 0, 0];
+        for (var ri = 3; ri < sd.length; ri++) {
+            var r = sd[ri];
+            for (var ci = 4; ci <= 9; ci++) {
+                if (r[ci] != null && typeof r[ci] === 'number') sums[ci] += r[ci];
+            }
+        }
+        // Номер строки с данными (последняя)
+        var lastDataRow = sd.length; // sd[0]=row1, ..., sd[n]=row(n+1), данные с sd[3]=row4
+        // Формируем итоговую строку
+        var sumData = {row: lastDataRow + 2}; // +1 пустая строка +1 итого
+        for (var ci = 4; ci <= 9; ci++) sumData[ci] = sums[ci];
+
         sd.push([null,null,null,null,null,null,null,null,null,null]);
-        var er = sd.length;
         var itogo = [null,null,null,null,null,null,null,null,null,null];
-        itogo[4] = {f:'SUM(E4:E'+er+')'};
-        itogo[5] = {f:'SUM(F4:F'+er+')'};
-        itogo[6] = {f:'SUM(G4:G'+er+')'};
-        itogo[7] = {f:'SUM(H4:H'+er+')'};
-        itogo[8] = {f:'SUM(I4:I'+er+')'};
-        itogo[9] = {f:'SUM(J4:J'+er+')'};
+        for (var ci = 4; ci <= 9; ci++) itogo[ci] = sums[ci];
         sd.push(itogo);
 
         var ws = XLSX.utils.aoa_to_sheet(sd);
@@ -214,8 +250,8 @@ async function splitMenu() {
 
         var out = XLSX.write(wb, {bookType:'xlsx', type:'array'});
 
-        // Заменяем styles.xml на встроенный
-        var styled = await applyStyles(new Uint8Array(out));
+        // Заменяем styles.xml и вставляем формулы SUM
+        var styled = await applyStyles(new Uint8Array(out), sumData);
 
         var blob = new Blob([styled], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
         var url = URL.createObjectURL(blob);
